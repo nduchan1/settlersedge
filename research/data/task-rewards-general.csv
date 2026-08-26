@@ -1,0 +1,21 @@
+category,task,wood,clay,iron,crop,xp,key
+Account population,Reach 500 population,150,150,150,150,10,TASK_APOP_1
+Account population,Reach 1000 population,300,300,300,300,20,TASK_APOP_2
+Account population,Reach 1500 population,450,450,450,450,30,TASK_APOP_3
+Account population,Reach 2500 population,600,600,600,600,40,TASK_APOP_4
+Account population,Reach 5000 population,750,750,750,750,50,TASK_APOP_5
+Account population,Reach 10000 population,900,900,900,900,60,TASK_APOP_6
+Account population,Reach 20000 population,1050,1050,1050,1050,70,TASK_APOP_7
+Account population,Reach 40000 population,1200,1200,1200,1200,80,TASK_APOP_8
+Account population,Reach 80000 population,1350,1350,1350,1350,90,TASK_APOP_9
+Account population,Reach 160000 population,1500,1500,1500,1500,100,TASK_APOP_10
+Account culture points,Reach 500 culture point production per day,150,150,150,150,10,TASK_ACP_1
+Account culture points,Reach 1000 culture point production per day,300,300,300,300,20,TASK_ACP_2
+Account culture points,Reach 1500 culture point production per day,450,450,450,450,30,TASK_ACP_3
+Account culture points,Reach 2500 culture point production per day,600,600,600,600,40,TASK_ACP_4
+Account culture points,Reach 5000 culture point production per day,750,750,750,750,50,TASK_ACP_5
+Account culture points,Reach 10000 culture point production per day,900,900,900,900,60,TASK_ACP_6
+Account culture points,Reach 20000 culture point production per day,1050,1050,1050,1050,70,TASK_ACP_7
+Account culture points,Reach 40000 culture point production per day,1200,1200,1200,1200,80,TASK_ACP_8
+Account culture points,Reach 80000 culture point production per day,1350,1350,1350,1350,90,TASK_ACP_9
+Account culture points,Reach 160000 culture point production per day,1500,1500,1500,1500,100,TASK_ACP_10

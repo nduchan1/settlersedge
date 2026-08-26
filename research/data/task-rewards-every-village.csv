@@ -1,0 +1,54 @@
+category,task,wood,clay,iron,crop,xp,key
+Main Building,Build Main Building level 1,150,150,150,150,10,TASK_GID15_1
+Main Building,Upgrade Main Building to level 10,300,300,300,300,20,TASK_GID15_10
+Main Building,Upgrade Main Building to level 20,450,450,450,450,30,TASK_GID15_20
+Even growth,One of all four resources to level 2,75,75,75,75,5,TASK_ORF_2
+Even growth,One of all four resources to level 4,150,150,150,150,10,TASK_ORF_4
+Even growth,One of all four resources to level 7,225,225,225,225,15,TASK_ORF_7
+Even growth,One of all four resources to level 10,300,300,300,300,20,TASK_ORF_10
+Complete economy,All resource fields to level 2,600,600,600,600,40,TASK_ARF_2
+Complete economy,All resource fields to level 4,1200,1200,1200,1200,80,TASK_ARF_4
+Complete economy,All resource fields to level 7,1800,1800,1800,1800,120,TASK_ARF_7
+Complete economy,All resource fields to level 8,2400,2400,2400,2400,160,TASK_ARF_8
+Complete economy,All resource fields to level 9,3000,3000,3000,3000,200,TASK_ARF_9
+Complete economy,All resource fields to level 10,3600,3600,3600,3600,240,TASK_ARF_10
+Rally Point,Build Rally Point level 1,75,75,75,75,5,TASK_GID16_1
+Rally Point,Upgrade Rally Point to level 10,150,150,150,150,10,TASK_GID16_10
+Rally Point,Upgrade Rally Point to level 20,225,225,225,225,15,TASK_GID16_20
+Warehouse,Build Warehouse level 1,75,75,75,75,5,TASK_GID10_1
+Warehouse,Upgrade Warehouse to level 10,150,150,150,150,10,TASK_GID10_10
+Warehouse,Upgrade Warehouse to level 20,225,225,225,225,15,TASK_GID10_20
+Granary,Build Granary level 1,75,75,75,75,5,TASK_GID11_1
+Granary,Upgrade Granary to level 10,150,150,150,150,10,TASK_GID11_10
+Granary,Upgrade Granary to level 20,225,225,225,225,15,TASK_GID11_20
+Barracks,Build Barracks level 1,75,75,75,75,5,TASK_GID19_1
+Academy,Build Academy level 1,150,150,150,150,10,TASK_GID22_1
+Townhall,Build Townhall level 1,600,600,600,600,40,TASK_GID24_1
+Townhall,Upgrade Townhall to level 10,1200,1200,1200,1200,80,TASK_GID24_10
+Townhall,Upgrade Townhall to level 20,1800,1800,1800,1800,120,TASK_GID24_20
+Cranny,Build Cranny level 1,75,75,75,75,5,TASK_GID23_1
+Cranny,Upgrade Cranny to level 10,150,150,150,150,10,TASK_GID23_10
+Marketplace,Build Marketplace level 1,150,150,150,150,10,TASK_GID17_1
+Marketplace,Upgrade Marketplace to level 10,300,300,300,300,20,TASK_GID17_10
+Marketplace,Upgrade Marketplace to level 20,450,450,450,450,30,TASK_GID17_20
+Residence / Palace / Command Center,Build Residence / Palace / Command Center level 1,300,300,300,300,20,TASK_GID252644_1
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 10,600,600,600,600,40,TASK_GID252644_10
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 20,900,900,900,900,60,TASK_GID252644_20
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Build Wall level 1,150,150,150,150,10,TASK_GID3132334243_1
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 10,300,300,300,300,20,TASK_GID3132334243_10
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 20,450,450,450,450,30,TASK_GID3132334243_20
+Village Population,Reach 50 population,375,375,375,375,25,TASK_VPOP_1
+Village Population,Reach 100 population,750,750,750,750,50,TASK_VPOP_2
+Village Population,Reach 150 population,1125,1125,1125,1125,75,TASK_VPOP_3
+Village Population,Reach 250 population,1500,1500,1500,1500,100,TASK_VPOP_4
+Village Population,Reach 350 population,1875,1875,1875,1875,125,TASK_VPOP_5
+Village Population,Reach 500 population,2250,2250,2250,2250,150,TASK_VPOP_6
+Village Population,Reach 750 population,2625,2625,2625,2625,175,TASK_VPOP_7
+Village Population,Reach 1000 population,3000,3000,3000,3000,200,TASK_VPOP_8
+Village Culture Points,Reach 50 culture point production per day,375,375,375,375,25,TASK_VCP_1
+Village Culture Points,Reach 100 culture point production per day,750,750,750,750,50,TASK_VCP_2
+Village Culture Points,Reach 150 culture point production per day,1125,1125,1125,1125,75,TASK_VCP_3
+Village Culture Points,Reach 250 culture point production per day,1500,1500,1500,1500,100,TASK_VCP_4
+Village Culture Points,Reach 350 culture point production per day,1875,1875,1875,1875,125,TASK_VCP_5
+Village Culture Points,Reach 500 culture point production per day,2250,2250,2250,2250,150,TASK_VCP_6
+Loyalty (Chiefed villages only!),Reach Loyalty of 100%,75,75,75,75,5,TASK_LOYALTY

@@ -1,0 +1,130 @@
+category,task,wood,clay,iron,crop,xp,key
+Main Building,Build Main Building level 1,150,150,150,150,10,TASK_GID15_1
+Main Building,Upgrade Main Building to level 3,300,300,300,300,20,TASK_GID15_3
+Main Building,Upgrade Main Building to level 7,450,450,450,450,30,TASK_GID15_7
+Main Building,Upgrade Main Building to level 12,600,600,600,600,40,TASK_GID15_12
+Main Building,Upgrade Main Building to level 20,750,750,750,750,50,TASK_GID15_20
+Woodcutter,One Woodcutter to level 2,150,150,150,150,10,TASK_GID1_One2
+Woodcutter,All Woodcutters to level 2,225,225,225,225,15,TASK_GID1_All2
+Woodcutter,All Woodcutters to level 3,450,450,450,450,30,TASK_GID1_All3
+Woodcutter,One Woodcutter to level 4,300,300,300,300,20,TASK_GID1_One4
+Woodcutter,All Woodcutters to level 5,675,675,675,675,45,TASK_GID1_All5
+Woodcutter,One Woodcutter to level 7,450,450,450,450,30,TASK_GID1_One7
+Woodcutter,All Woodcutters to level 8,900,900,900,900,60,TASK_GID1_All8
+Woodcutter,One Woodcutter to level 10,600,600,600,600,40,TASK_GID1_One10
+Woodcutter,All Woodcutters to level 10,1125,1125,1125,1125,75,TASK_GID1_All10
+Claypit,One Claypit to level 2,150,150,150,150,10,TASK_GID2_One2
+Claypit,All Claypits to level 2,225,225,225,225,15,TASK_GID2_All2
+Claypit,All Claypits to level 3,450,450,450,450,30,TASK_GID2_All3
+Claypit,One Claypit to level 4,300,300,300,300,20,TASK_GID2_One4
+Claypit,All Claypits to level 5,675,675,675,675,45,TASK_GID2_All5
+Claypit,One Claypit to level 7,450,450,450,450,30,TASK_GID2_One7
+Claypit,All Claypits to level 8,900,900,900,900,60,TASK_GID2_All8
+Claypit,One Claypit to level 10,600,600,600,600,40,TASK_GID2_One10
+Claypit,All Claypits to level 10,1125,1125,1125,1125,75,TASK_GID2_All10
+Ironmine,One Ironmine to level 2,150,150,150,150,10,TASK_GID3_One2
+Ironmine,All Ironmines to level 2,225,225,225,225,15,TASK_GID3_All2
+Ironmine,All Ironmines to level 3,450,450,450,450,30,TASK_GID3_All3
+Ironmine,One Ironmine to level 4,300,300,300,300,20,TASK_GID3_One4
+Ironmine,All Ironmines to level 5,675,675,675,675,45,TASK_GID3_All5
+Ironmine,One Ironmine to level 7,450,450,450,450,30,TASK_GID3_One7
+Ironmine,All Ironmines to level 8,900,900,900,900,60,TASK_GID3_All8
+Ironmine,One Ironmine to level 10,600,600,600,600,40,TASK_GID3_One10
+Ironmine,All Ironmines to level 10,1125,1125,1125,1125,75,TASK_GID3_All10
+Cropland,One Cropland to level 2,150,150,150,150,10,TASK_GID4_One2
+Cropland,All Croplands to level 2,225,225,225,225,15,TASK_GID4_All2
+Cropland,All Croplands to level 3,450,450,450,450,30,TASK_GID4_All3
+Cropland,One Cropland to level 4,300,300,300,300,20,TASK_GID4_One4
+Cropland,All Croplands to level 5,675,675,675,675,45,TASK_GID4_All5
+Cropland,One Cropland to level 7,450,450,450,450,30,TASK_GID4_One7
+Cropland,All Croplands to level 8,900,900,900,900,60,TASK_GID4_All8
+Cropland,One Cropland to level 10,600,600,600,600,40,TASK_GID4_One10
+Cropland,All Croplands to level 10,1125,1125,1125,1125,75,TASK_GID4_All10
+Even growth,One of all four resources to level 2,75,75,75,75,5,TASK_ORF_2
+Even growth,One of all four resources to level 4,150,150,150,150,10,TASK_ORF_4
+Even growth,One of all four resources to level 7,225,225,225,225,15,TASK_ORF_7
+Even growth,One of all four resources to level 10,300,300,300,300,20,TASK_ORF_10
+Complete economy,All resource fields to level 2,600,600,600,600,40,TASK_ARF_2
+Complete economy,All resource fields to level 4,1200,1200,1200,1200,80,TASK_ARF_4
+Complete economy,All resource fields to level 7,1800,1800,1800,1800,120,TASK_ARF_7
+Complete economy,All resource fields to level 8,2400,2400,2400,2400,160,TASK_ARF_8
+Complete economy,All resource fields to level 9,3000,3000,3000,3000,200,TASK_ARF_9
+Complete economy,All resource fields to level 10,3600,3600,3600,3600,240,TASK_ARF_10
+Rally Point,Build Rally Point level 1,150,150,150,150,10,TASK_GID16_1
+Rally Point,Upgrade Rally Point to level 10,300,300,300,300,20,TASK_GID16_10
+Rally Point,Upgrade Rally Point to level 20,450,450,450,450,30,TASK_GID16_20
+Warehouse,Build Warehouse level 1,75,75,75,75,5,TASK_GID10_1
+Warehouse,Upgrade Warehouse to level 3,150,150,150,150,10,TASK_GID10_3
+Warehouse,Upgrade Warehouse to level 7,225,225,225,225,15,TASK_GID10_7
+Warehouse,Upgrade Warehouse to level 12,300,300,300,300,20,TASK_GID10_12
+Warehouse,Upgrade Warehouse to level 20,375,375,375,375,25,TASK_GID10_20
+Granary,Build Granary level 1,75,75,75,75,5,TASK_GID11_1
+Granary,Upgrade Granary to level 3,150,150,150,150,10,TASK_GID11_3
+Granary,Upgrade Granary to level 7,225,225,225,225,15,TASK_GID11_7
+Granary,Upgrade Granary to level 12,300,300,300,300,20,TASK_GID11_12
+Granary,Upgrade Granary to level 20,375,375,375,375,25,TASK_GID11_20
+Barracks,Build Barracks level 1,75,75,75,75,5,TASK_GID19_1
+Barracks,Upgrade Barracks to level 3,150,150,150,150,10,TASK_GID19_3
+Barracks,Upgrade Barracks to level 7,225,225,225,225,15,TASK_GID19_7
+Barracks,Upgrade Barracks to level 12,300,300,300,300,20,TASK_GID19_12
+Barracks,Upgrade Barracks to level 20,375,375,375,375,25,TASK_GID19_20
+Stable,Build Stable level 1,150,150,150,150,10,TASK_GID20_1
+Stable,Upgrade Stable to level 3,300,300,300,300,20,TASK_GID20_3
+Stable,Upgrade Stable to level 7,450,450,450,450,30,TASK_GID20_7
+Stable,Upgrade Stable to level 12,600,600,600,600,40,TASK_GID20_12
+Stable,Upgrade Stable to level 20,750,750,750,750,50,TASK_GID20_20
+Academy,Build Academy level 1,150,150,150,150,10,TASK_GID22_1
+Academy,Upgrade Academy to level 10,300,300,300,300,20,TASK_GID22_10
+Academy,Upgrade Academy to level 20,450,450,450,450,30,TASK_GID22_20
+Smithy,Build Smithy level 1,150,150,150,150,10,TASK_GID13_1
+Smithy,Upgrade Smithy to level 10,300,300,300,300,20,TASK_GID13_10
+Smithy,Upgrade Smithy to level 20,450,450,450,450,30,TASK_GID13_20
+Townhall,Build Townhall level 1,600,600,600,600,40,TASK_GID24_1
+Townhall,Upgrade Townhall to level 10,1200,1200,1200,1200,80,TASK_GID24_10
+Townhall,Upgrade Townhall to level 20,1800,1800,1800,1800,120,TASK_GID24_20
+Workshop,Build Workshop level 1,600,600,600,600,40,TASK_GID21_1
+Cranny,Build Cranny level 1,75,75,75,75,5,TASK_GID23_1
+Cranny,Upgrade Cranny to level 3,150,150,150,150,10,TASK_GID23_3
+Cranny,Upgrade Cranny to level 6,225,225,225,225,15,TASK_GID23_6
+Cranny,Upgrade Cranny to level 10,300,300,300,300,20,TASK_GID23_10
+Marketplace,Build Marketplace level 1,150,150,150,150,10,TASK_GID17_1
+Marketplace,Upgrade Marketplace to level 3,300,300,300,300,20,TASK_GID17_3
+Marketplace,Upgrade Marketplace to level 7,450,450,450,450,30,TASK_GID17_7
+Marketplace,Upgrade Marketplace to level 12,600,600,600,600,40,TASK_GID17_12
+Marketplace,Upgrade Marketplace to level 20,750,750,750,750,50,TASK_GID17_20
+Embassy,Build Embassy level 1,300,300,300,300,20,TASK_GID18_1
+Residence / Palace / Command Center,Build Residence / Palace / Command Center level 1,300,300,300,300,20,TASK_GID252644_1
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 3,600,600,600,600,40,TASK_GID252644_3
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 7,900,900,900,900,60,TASK_GID252644_7
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 10,1200,1200,1200,1200,80,TASK_GID252644_10
+Residence / Palace / Command Center,Upgrade Residence / Palace / Command Center to level 20,1500,1500,1500,1500,100,TASK_GID252644_20
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Build Wall level 1,150,150,150,150,10,TASK_GID3132334243_1
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 3,300,300,300,300,20,TASK_GID3132334243_3
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 7,450,450,450,450,30,TASK_GID3132334243_7
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 12,600,600,600,600,40,TASK_GID3132334243_12
+Citywall / Earthwall / Palisade / Stonewall / Makeshift Wall,Upgrade Wall to level 20,750,750,750,750,50,TASK_GID3132334243_20
+Sawmill,Build Sawmill level 1,150,150,150,150,10,TASK_GID5_1
+Sawmill,Upgrade Sawmill to level 5,300,300,300,300,20,TASK_GID5_5
+Brickyard,Build Brickyard level 1,150,150,150,150,10,TASK_GID6_1
+Brickyard,Upgrade Brickyard to level 5,300,300,300,300,20,TASK_GID6_5
+Iron Foundry,Build Iron Foundry level 1,150,150,150,150,10,TASK_GID7_1
+Iron Foundry,Upgrade Iron Foundry to level 5,300,300,300,300,20,TASK_GID7_5
+Grain Mill,Build Grain Mill level 1,150,150,150,150,10,TASK_GID8_1
+Grain Mill,Upgrade Grain Mill to level 5,300,300,300,300,20,TASK_GID8_5
+Bakery,Build Bakery level 1,150,150,150,150,10,TASK_GID9_1
+Bakery,Upgrade Bakery to level 5,300,300,300,300,20,TASK_GID9_5
+Celebration,Celebration,600,600,600,600,40,TASK_Celebration
+Village Population,Reach 50 population,375,375,375,375,25,TASK_VPOP_1
+Village Population,Reach 100 population,750,750,750,750,50,TASK_VPOP_2
+Village Population,Reach 150 population,1125,1125,1125,1125,75,TASK_VPOP_3
+Village Population,Reach 250 population,1500,1500,1500,1500,100,TASK_VPOP_4
+Village Population,Reach 350 population,1875,1875,1875,1875,125,TASK_VPOP_5
+Village Population,Reach 500 population,2250,2250,2250,2250,150,TASK_VPOP_6
+Village Population,Reach 750 population,2625,2625,2625,2625,175,TASK_VPOP_7
+Village Population,Reach 1000 population,3000,3000,3000,3000,200,TASK_VPOP_8
+Village Culture Points,Reach 50 culture point production per day,375,375,375,375,25,TASK_VCP_1
+Village Culture Points,Reach 100 culture point production per day,750,750,750,750,50,TASK_VCP_2
+Village Culture Points,Reach 150 culture point production per day,1125,1125,1125,1125,75,TASK_VCP_3
+Village Culture Points,Reach 250 culture point production per day,1500,1500,1500,1500,100,TASK_VCP_4
+Village Culture Points,Reach 350 culture point production per day,1875,1875,1875,1875,125,TASK_VCP_5
+Village Culture Points,Reach 500 culture point production per day,2250,2250,2250,2250,150,TASK_VCP_6

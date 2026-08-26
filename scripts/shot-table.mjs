@@ -1,0 +1,15 @@
+import { chromium } from 'playwright';
+const dir = process.argv[2];
+const b = await chromium.launch({ channel: 'msedge', headless: true });
+const p = await (await b.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+await p.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' });
+await p.getByText("Settler's Edge").waitFor();
+await p.getByRole('button', { name: /^Fast/ }).click();
+await p.getByRole('button', { name: /find fastest settle/i }).click();
+await p.getByText(/to village #2/i).waitFor({ timeout: 60000 });
+const paper = p.locator('table').first().locator('xpath=ancestor::*[contains(@class,"MuiPaper")][1]');
+await paper.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+await p.waitForTimeout(200);
+const box = await paper.boundingBox();
+await p.screenshot({ path: dir + '/table.png', clip: { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 560) } });
+await b.close();

@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const dir = process.argv[2];
+const b = await chromium.launch({ channel: 'msedge', headless: true });
+const p = await (await b.newContext({ viewport: { width: 1600, height: 950 } })).newPage();
+await p.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' });
+await p.getByText("Settler's Edge").waitFor();
+await p.getByRole('button', { name: /^Fast/ }).click();
+await p.getByRole('button', { name: /find fastest settle/i }).click();
+await p.getByText(/to village #2/i).waitFor({ timeout: 60000 });
+await p.waitForTimeout(300);
+await p.screenshot({ path: dir + '/full.png' });
+await b.close();
