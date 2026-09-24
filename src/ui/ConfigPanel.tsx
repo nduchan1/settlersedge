@@ -46,7 +46,7 @@ export function recordOasisDefaults(_speed: ServerSpeed, _tribe?: Tribe): Pick<U
 export function defaultsFor(speed: ServerSpeed, tribe: Tribe): UiConfig {
   return { speed, tribe, advancedStart: false, ...heroDefaults(speed, tribe), ...recordOasisDefaults(speed, tribe) };
 }
-export const DEFAULT_CONFIG: UiConfig = defaultsFor(2, 'gauls');
+export const DEFAULT_CONFIG: UiConfig = defaultsFor(3, 'gauls');
 
 const TRIBES: Tribe[] = ['romans', 'gauls', 'teutons', 'egyptians', 'huns', 'spartans'];
 const SPEEDS: ServerSpeed[] = [1, 2, 3, 5, 10];
@@ -68,7 +68,7 @@ export function ConfigPanel({ value, onChange, onRun, busy, mode, onModeChange, 
   busy: boolean;
   mode: SearchMode;
   onModeChange: (m: SearchMode) => void;
-  progress: { depth: number; best: number | null } | null;
+  progress: { stage: string; depth: number; best: number | null; pct?: number } | null;
 }) {
   const set = <K extends keyof UiConfig>(k: K, v: UiConfig[K]) => onChange({ ...value, [k]: v });
   const defaults = defaultsFor(value.speed, value.tribe);
@@ -209,18 +209,19 @@ export function ConfigPanel({ value, onChange, onRun, busy, mode, onModeChange, 
         <Divider />
         <Typography variant="h6">Search depth</Typography>
         <ToggleButtonGroup exclusive fullWidth size="small" value={mode} onChange={(_, m) => m && onModeChange(m)} disabled={busy}>
-          <ToggleButton value="fast">Fast · ~20s</ToggleButton>
-          <ToggleButton value="deep">Deep · ~1 min</ToggleButton>
-          <ToggleButton value="ultra">Ultra · ~2-3 min</ToggleButton>
+          <ToggleButton value="fast">Fast · ~5-10s</ToggleButton>
+          <ToggleButton value="deep">Deep · ~15-25s</ToggleButton>
+          <ToggleButton value="ultra">Ultra · ~40-60s</ToggleButton>
         </ToggleButtonGroup>
         <Typography variant="caption" color="text.secondary" sx={{ mt: '0 !important' }}>
-          Fast = strategy-grid planner. Deep/Ultra = organic search over raw build actions with
-          no strategy rules — it discovers openings the guides don't have (never worse than Fast).
+          Every mode scores the strategy grid, then edits whole plans (the best strategy and the
+          alliance guide as starting points) — every order can move, go or be added. More time =
+          more edits tried. Never worse than the best strategy.
         </Typography>
         <Button variant="contained" size="large" onClick={onRun} disabled={busy}>
           {busy
             ? progress
-              ? `Searching… depth ${progress.depth}${progress.best ? ` · best ${(progress.best / 3600).toFixed(1)}h` : ''}`
+              ? `${progress.stage === 'polish' ? `Polishing the full plan… ${progress.pct ?? 0}%` : progress.stage === 'grid' ? 'Scoring strategies…' : `Searching… depth ${progress.depth}`}${progress.best ? ` · best ${(progress.best / 3600).toFixed(1)}h` : ''}`
               : 'Optimizing…'
             : 'Find fastest settle'}
         </Button>

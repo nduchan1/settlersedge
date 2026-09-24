@@ -14,7 +14,7 @@ import { GID, building, buildings, levelData, raceMaxLevel , wallGid } from '../
 import { tribes } from '../data/tribes';
 import { cavalryRaiders, raidThroughputPerHour, raiders, unitThroughputPerHour } from '../data/raiders';
 import { settlerTime } from '../formulas';
-import { CELEBRATION_COST, Simulation, addSlot, cpPerSecond, ownedPerResource, reachable, settleGoal, storageCaps, type SimContext, type SimResult, type SimState } from '../sim/simulate';
+import { CELEBRATION_COST, MAX_BUILDING_SLOTS, Simulation, type PlanOrder, addSlot, buildingSlotsUsed, canAddBuilding, cpPerSecond, ownedPerResource, reachable, settleGoal, type SimContext, type SimResult, type SimState } from '../sim/simulate';
 import { celebrationCpCap } from '../data/culture';
 import { greedyContinue, optimize, type PlanOutcome, type StrategyParams } from './planner';
 import type { Tribe } from '../types';
@@ -34,6 +34,11 @@ export interface BeamResult {
   settleTime: number | null;
   actions: BeamAction[];
   result: SimResult;
+  /** The strategy params the returned plan's tail was ACTUALLY finished with (gold policy + book
+   *  hour chosen by the tail re-rank) — a mid-race re-plan must replay with exactly these. */
+  params: StrategyParams;
+  /** The COMPLETE plan as a replayable order list (prefix + tail) — the seed plan-space search edits. */
+  orders: PlanOrder[];
   nodesExpanded: number;
 }
 
@@ -74,10 +79,9 @@ function enumerate(sim: Simulation, thr: number): BeamAction[] {
       if (gain > lvl + 1 && gain <= raceMaxLevel(gid)) out.push({ kind: 'up', gid, levels: gain - lvl }); // data-derived dead-level macro
     }
   }
-  const slotsUsed = s.slots.filter((sl) => sl.gid > 4).length;
-  if (slotsUsed < 20) {
+  if (buildingSlotsUsed(s) < MAX_BUILDING_SLOTS) {
     for (const gid of placeableGids(sim.ctx.tribe)) {
-      if (!present.has(gid) || gid === GID.cranny || gid === GID.warehouse || gid === GID.granary) {
+      if (!present.has(gid) || canAddBuilding(s, gid)) { // 2nd cranny only past a L10 one (official rule)
         // prereqs need NOT be met: 'new' is a data-driven macro that builds the prerequisite
         // chain (the game UI's "requires X" list) — otherwise dead chains blind the search.
         // But keep chains short: giant chains are reachable incrementally via their parts.
@@ -124,7 +128,7 @@ function enumerate(sim: Simulation, thr: number): BeamAction[] {
  *  itself grays out unstorable amounts), same class as prerequisite chains, not strategy. */
 function fitCaps(sim: Simulation, cost: { wood: number; clay: number; iron: number; crop: number }): void {
   for (let guard = 0; guard < 40; guard++) {
-    const caps = storageCaps(sim.state);
+    const caps = sim.orderedCaps(); // queued storage levels count (one raise, not two)
     const own = ownedPerResource(sim.state);
     // storage-ahead only for MEANINGFUL idle amounts (> 25% over cap) and never past L20 / a sane
     // early ceiling — otherwise the rule over-invests in storage on slow economies
@@ -183,7 +187,7 @@ function chainLength(sim: Simulation, gid: number, level: number, seen = new Set
   return n + Math.max(0, level - have);
 }
 
-function applyAction(sim: Simulation, a: BeamAction): boolean {
+export function applyAction(sim: Simulation, a: BeamAction): boolean {
   try {
     if (a.kind === 'field') {
       let best = -1, bl = Infinity;
@@ -196,7 +200,13 @@ function applyAction(sim: Simulation, a: BeamAction): boolean {
       if (best < 0) return false;
       for (let k = 0; k < a.levels; k++) buildFit(sim, best);
     } else if (a.kind === 'new') {
-      ensureWithPrereqs(sim, a.gid, 1);
+      if (sim.state.slots.some((sl) => sl.gid === a.gid)) {
+        // another cranny / warehouse / granary: a genuinely NEW slot, legal only past the unlock level
+        if (!canAddBuilding(sim.state, a.gid)) return false;
+        buildFit(sim, addSlot(sim.state, a.gid));
+      } else {
+        ensureWithPrereqs(sim, a.gid, 1);
+      }
     } else if (a.kind === 'party') {
       fitCaps(sim, CELEBRATION_COST.small);
       sim.celebration(false);
@@ -307,7 +317,7 @@ function cpMarginalCost(s: SimState): number {
     seen.add(sl.gid);
     consider(sl.gid, sl.level);
   }
-  consider(GID.cranny, 0);
+  if (canAddBuilding(s, GID.cranny)) consider(GID.cranny, 0);
   // CP/day → the shortfall is in CP-days-until-settle terms; approximate a horizon of ~1 day
   return Number.isFinite(best) ? best : 2000;
 }
@@ -320,13 +330,23 @@ function cpMarginalCost(s: SimState): number {
 /** Rollout = "how fast does a competent default player finish from here?" — the greedy planner
  *  continues the cloned state to settle. The organic beam therefore explores DEVIATIONS from a
  *  strong baseline, and any node that beats the greedy's own opening is a genuine discovery. */
-function rollout(sim: Simulation, thr: number, params: StrategyParams): number {
-  // the continuation can only improve on the bare projection; take the better of the two
+function rollout(sim: Simulation, thr: number, params: StrategyParams, finishMins?: number[]): number {
+  // the continuation can only improve on the bare projection; take the better of the two.
+  // PER-NODE GOLD POLICY (audit F5d, made concrete by Nitai's oasis-count sweep): each node is
+  // finished under EVERY candidate instant-finish threshold and scored by its best — one frozen
+  // policy mispriced whole lineages (the n=30 cavalry line lost 1:13 with 63 gold left unspent).
   const bare = sim.projectSettle(thr);
-  const r = sim.clone();
-  const t = greedyContinue(r, params);
-  if (t !== null && bare !== null) return Math.min(t, bare);
-  return t ?? bare ?? boundH(sim, thr) * 1.5;
+  let best: number | null = null;
+  for (const fm of finishMins?.length ? finishMins : [params.finishMin]) {
+    const r = sim.clone();
+    if (r.ctx.gold && r.ctx.gold.instantFinishMin !== fm) {
+      r.ctx = { ...r.ctx, gold: { ...r.ctx.gold, instantFinishMin: fm } };
+    }
+    const t = greedyContinue(r, params.finishMin === fm ? params : { ...params, finishMin: fm });
+    if (t !== null && (best === null || t < best)) best = t;
+  }
+  if (best !== null && bare !== null) return Math.min(best, bare);
+  return best ?? bare ?? boundH(sim, thr) * 1.5;
 }
 
 function signature(sim: Simulation): string {
@@ -344,6 +364,10 @@ export interface BeamOptions {
   rolloutSteps?: number;
   /** Precomputed greedy grid (same ctx) — avoids running the grid twice (worker dedupe). */
   greedyGrid?: PlanOutcome[];
+  /** Mid-race re-planning: search from THIS state instead of server start (oet's follow-along).
+   *  The sim's own ctx already carries the winning gold/respec policy; `ctx` is used for tail
+   *  policy swaps only. */
+  startSim?: Simulation;
   onProgress?: (depth: number, best: number | null, stats?: { frontier: number; maxRes: number; maxTh: number; maxTimeH: number }) => void;
 }
 
@@ -357,14 +381,25 @@ export function beamSearch(ctx: SimContext, opts: BeamOptions = {}): BeamResult 
   const greedyGrid = opts.greedyGrid ?? optimize(ctx);
   const greedyBest = greedyGrid[0];
   const rolloutParams: StrategyParams = greedyBest.params;
+  // candidate gold policies for rollouts: the yardstick's own finishMin + the best-ranked DISTINCT
+  // FINITE value in the sorted grid. Finite matters: the first different value is often Infinity
+  // ("never instant-finish"), a do-less policy that almost never wins a min() — probe showed it
+  // made two-policy rollouts a byte-identical no-op. A different SPENDING threshold is the real
+  // alternative (the n=30 lineage lost 1:13 with 63 gold unspent — it wanted a LOWER threshold).
+  const rolloutFinishMins: number[] = [rolloutParams.finishMin];
+  const altPolicy = greedyGrid.find((o) => o.settleTime !== null && o.params.finishMin !== rolloutParams.finishMin && Number.isFinite(o.params.finishMin))
+    ?? greedyGrid.find((o) => o.settleTime !== null && o.params.finishMin !== rolloutParams.finishMin);
+  if (altPolicy) rolloutFinishMins.push(altPolicy.params.finishMin);
   let bestSettle = Math.min(opts.upperBound ?? Infinity, greedyBest.settleTime ?? Infinity);
   let bestActions: BeamAction[] | null = bestSettle < Infinity ? [] : null;
   let expanded = 0;
 
   interface Node { sim: Simulation; actions: BeamAction[]; h: number }
-  // search sims share the yardstick's instant-finish policy so prefix and continuation agree
-  const searchCtx: SimContext = ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: rolloutParams.finishMin } } : ctx;
-  let frontier: Node[] = [{ sim: new Simulation(searchCtx), actions: [], h: 0 }];
+  // search sims share the yardstick's instant-finish policy so prefix and continuation agree —
+  // and its searched book hour (the beam's own 'book' action can still fire EARLIER than it)
+  let searchCtx: SimContext = ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: rolloutParams.finishMin } } : ctx;
+  if (rolloutParams.respecAtH !== undefined) searchCtx = { ...searchCtx, hero: { ...searchCtx.hero, respecAtH: rolloutParams.respecAtH } };
+  let frontier: Node[] = [{ sim: opts.startSim ? opts.startSim.clone() : new Simulation(searchCtx), actions: [], h: 0 }];
   let sinceImproved = 0;
 
   for (let depth = 0; depth < maxDepth && frontier.length; depth++) {
@@ -395,7 +430,7 @@ export function beamSearch(ctx: SimContext, opts: BeamOptions = {}): BeamResult 
       const nodeParams = n.sim.state.cavalryResearched || n.sim.state.slots.some((sl) => sl.gid === GID.stable)
         ? { ...rolloutParams, cavalry: true }
         : rolloutParams;
-      n.h = rollout(n.sim, thr, nodeParams);
+      n.h = rollout(n.sim, thr, nodeParams, rolloutFinishMins);
       // a rollout IS a complete plan (prefix + greedy continuation) — record it if best
       if (n.h < bestSettle) { bestSettle = n.h; bestActions = n.actions; }
     }
@@ -438,9 +473,19 @@ export function beamSearch(ctx: SimContext, opts: BeamOptions = {}): BeamResult 
 
   // replay the winning prefix, then the same greedy continuation the rollout used, for a
   // full-fidelity result (events, costs, chart)
+  // full-fidelity replay factory: from server start normally, from the captured state on a re-plan
+  const freshReplay = (rctx: SimContext): Simulation => {
+    if (opts.startSim) {
+      const r = opts.startSim.clone();
+      r.ctx = rctx;
+      r.enableRecording();
+      return r;
+    }
+    return new Simulation(rctx);
+  };
   if (!bestActions) {
-    const empty = new Simulation(ctx).finish();
-    return { settleTime: null, actions: [], result: empty, nodesExpanded: expanded };
+    const empty = freshReplay(ctx).finish();
+    return { settleTime: null, actions: [], result: empty, nodesExpanded: expanded, params: rolloutParams, orders: [] };
   }
   // tail re-rank (audit: rollout gold policy was frozen — the same prefix under the #2 grid cell's
   // finishMin/partyEarly settled 44 min earlier): replay the winning prefix under the top-K grid
@@ -456,24 +501,64 @@ export function beamSearch(ctx: SimContext, opts: BeamOptions = {}): BeamResult 
     if (paramSets.length >= 3) break;
   }
   if (!paramSets.length) paramSets.push(rolloutParams);
-  let best: { settleTime: number | null; result: ReturnType<Simulation['finish']> } | null = null;
-  for (const ps of paramSets) {
-    const replayCtx: SimContext = ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: ps.finishMin } } : ctx;
+  // policy diversity guarantee: the top grid cells usually ALL share one finishMin, so the re-rank
+  // was "3 sets, 1 gold policy" — force in the best set with a genuinely different (finite-first)
+  // threshold so the winner's tail is always tried under at least two spending styles
+  if (altPolicy && paramSets.every((p) => p.finishMin === paramSets[0].finishMin)) {
+    if (paramSets.length >= 3) paramSets.pop();
+    paramSets.push(altPolicy.params);
+  }
+  let best: { settleTime: number | null; result: ReturnType<Simulation['finish']>; ps: StrategyParams; actions: BeamAction[]; orders: PlanOrder[] } | null = null;
+  const tryParams = (ps: StrategyParams, actions: BeamAction[] = bestActions!): void => {
+    let replayCtx: SimContext = ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: ps.finishMin } } : ctx;
+    replayCtx = { ...replayCtx, hero: { ...replayCtx.hero, respecAtH: ps.respecAtH ?? ctx.hero.respecAtH } };
     try {
-      const replay = new Simulation(replayCtx);
-      for (const a of bestActions) applyAction(replay, a);
+      const replay = freshReplay(replayCtx);
+      replay.recorder = [];
+      for (const a of actions) applyAction(replay, a);
       greedyContinue(replay, ps);
       const result = replay.finish();
       if (result.settleTime !== null && (best === null || best.settleTime === null || result.settleTime < best.settleTime)) {
-        best = { settleTime: result.settleTime, result };
+        best = { settleTime: result.settleTime, result, ps, actions, orders: replay.recorder };
       }
     } catch { /* a param set can be infeasible for this prefix — skip it */ }
+  };
+  for (const ps of paramSets) tryParams(ps);
+  // the EXACT policies the rollouts scored with: a prefix can win under the alternative gold policy
+  // or the cavalry-aware continuation, and the grid's top sets need not contain either
+  for (const fm of rolloutFinishMins) {
+    tryParams({ ...rolloutParams, finishMin: fm });
+    if (cavalryRaiders[ctx.tribe]) tryParams({ ...rolloutParams, finishMin: fm, cavalry: true });
+  }
+  // BOOK-HOUR re-rank: the grid picks the Book-of-Wisdom hour on the GREEDY's plan, but the beam's
+  // plan is a different plan — on Nitai's Gaul map the greedy's favourite (12h) cost the beam
+  // lineage 25 min against its own optimum (16:30). Replays are cheap: scan a coarse ladder around
+  // the winner's hour (plus the sim's auto cutoff), then one finer step around the best.
+  // (not on a mid-race start: the respec boundary event is scheduled at construction only)
+  if (best && !opts.startSim && !ctx.hero.enabled && ctx.oasisRaids && ctx.hero.respecAtH === undefined) {
+    const u = 6 / ctx.config.speed; // x3 → 2h rungs
+    const winner: StrategyParams = (best as { ps: StrategyParams }).ps;
+    const h0 = winner.respecAtH;
+    const ladder: (number | undefined)[] = h0 === undefined
+      ? [3 * u, 4.5 * u, 6 * u, 7.5 * u, 9 * u]
+      : [h0 - 2 * u, h0 - u, h0 + u, h0 + 2 * u, h0 + 3 * u, undefined];
+    for (const h of ladder) if (h === undefined || h > 0) tryParams({ ...winner, respecAtH: h });
+    const h1 = (best as { ps: StrategyParams }).ps.respecAtH;
+    if (h1 !== undefined) for (const h of [h1 - u / 2, h1 + u / 2]) if (h > 0) tryParams({ ...winner, respecAtH: h });
+  }
+  // GUARANTEE: never hand back less than the greedy baseline the search was seeded with (a rollout
+  // score is not a promise — the replayed tail can land worse than the grid's own best plan)
+  {
+    const b0 = best as { settleTime: number | null } | null;
+    if (greedyBest.settleTime !== null && (!b0 || b0.settleTime === null || greedyBest.settleTime < b0.settleTime)) tryParams(greedyBest.params, []);
   }
   if (!best) { // fall back to the plain rollout params
-    const replay = new Simulation(ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: rolloutParams.finishMin } } : ctx);
+    const replay = freshReplay(ctx.gold ? { ...ctx, gold: { ...ctx.gold, instantFinishMin: rolloutParams.finishMin } } : ctx);
+    replay.recorder = [];
     for (const a of bestActions) applyAction(replay, a);
     greedyContinue(replay, rolloutParams);
-    best = { settleTime: null, result: replay.finish() };
+    best = { settleTime: null, result: replay.finish(), ps: rolloutParams, actions: bestActions, orders: replay.recorder };
   }
-  return { settleTime: best.result.settleTime ?? bestSettle, actions: bestActions, result: best.result, nodesExpanded: expanded };
+  const fin = best as { settleTime: number | null; result: ReturnType<Simulation['finish']>; ps: StrategyParams; actions: BeamAction[]; orders: PlanOrder[] };
+  return { settleTime: fin.result.settleTime ?? bestSettle, actions: fin.actions, result: fin.result, nodesExpanded: expanded, params: fin.ps, orders: fin.orders };
 }

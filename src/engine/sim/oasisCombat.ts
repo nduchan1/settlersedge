@@ -37,14 +37,18 @@ export function heroFightingStrength(level: number, tribe: Tribe, productionHero
 
 /** Mounted hero speed, fields/h at 1x: Gelding 14; Gauls +5 mounted; Huns +3 (fully-mounted army).
  *  Adventure #1 always gives the horse (first ~30–60 min) — clears start mounted. */
-export function heroMountedSpeed(tribe: Tribe): number {
+/** Hero speed: 7 on foot; the FIRST adventure always rewards the horse (official fixed sequence,
+ *  research/05 §36) → 14 mounted + tribe bonus (Gaul +5, Hun +3 — mounted only). Without the
+ *  horse a strength hero is useless for clears (round trips ×2–2.7), so the adventure comes first. */
+export function heroMountedSpeed(tribe: Tribe, mounted = true): number {
+  if (!mounted) return 7;
   return 14 + (tribe === 'gauls' ? 5 : 0) + (tribe === 'huns' ? 3 : 0);
 }
 
 /** Hours per clear cycle: walk to the oasis and home again (no oasis-to-oasis chaining — Nitai).
  *  Bounty is credited at the HIT (halfway), but the next raid leaves only after the return. */
-export function raidRoundTripH(tribe: Tribe, distance: number, serverSpeed: number): number {
-  return (2 * distance) / (heroMountedSpeed(tribe) * troopSpeedFactor(serverSpeed));
+export function raidRoundTripH(tribe: Tribe, distance: number, serverSpeed: number, mounted = true): number {
+  return (2 * distance) / (heroMountedSpeed(tribe, mounted) * troopSpeedFactor(serverSpeed));
 }
 
 /** One raid hit: offense points vs a pack of `supply` points ⇒ supply killed + hero HP lost. */

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Box, Button, Checkbox, Chip, ListItemText, MenuItem, Paper, Select, Stack, Table, TableBody, TableCell,
-  TableHead, TableRow, Typography, ToggleButton, ToggleButtonGroup,
+  TableHead, TableRow, TextField, Typography, ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import {
   Area, CartesianGrid, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -142,9 +142,17 @@ const RES_COLORS: Record<keyof Resources, string> = { wood: '#8fbf6b', clay: '#d
 const safeBuildingName = (e: SimEvent): string => (e.gid !== undefined ? buildingName(e.gid) : e.label.replace(/^Finish Now(?: \(same click\))?:?\s*/, ''));
 const fmtRes = (n: number) => Math.round(n).toLocaleString();
 
-export function ResultsView({ outcomes, speed, advancedStart }: { outcomes: PlanOutcome[]; speed: ServerSpeed; advancedStart: boolean }) {
-  const [view, setView] = useState<'timeline' | 'chart' | 'economy' | 'strategies'>('timeline');
+export function ResultsView({ outcomes, speed, advancedStart, onReplan, canReplan, replanError }: {
+  outcomes: PlanOutcome[]; speed: ServerSpeed; advancedStart: boolean;
+  onReplan?: (input: { atH: number; res: Resources; bag?: Resources; cp?: number; cleared?: number }) => void;
+  canReplan?: boolean; replanError?: string | null;
+}) {
+  const [view, setView] = useState<'timeline' | 'overview' | 'chart' | 'economy' | 'strategies'>('timeline');
   const [evtFilter, setEvtFilter] = useState<string[]>(CATEGORIES.map((c) => c.key));
+  // follow-along (oet): report your REAL state at hour X, the optimizer re-plans the rest
+  const [rp, setRp] = useState({ atH: '', wood: '', clay: '', iron: '', crop: '', bwood: '', bclay: '', biron: '', bcrop: '', cp: '', cleared: '' });
+  const rpSet = (k: keyof typeof rp) => (e: { target: { value: string } }) => setRp((s) => ({ ...s, [k]: e.target.value }));
+  const rpReady = rp.atH !== '' && rp.wood !== '' && rp.clay !== '' && rp.iron !== '' && rp.crop !== '';
   const best = outcomes[0];
   // Advanced Start races village FOUR (CP for v2+v3 mostly pre-granted) — match the engine's goal
   const village = advancedStart ? 4 : 2;
@@ -181,6 +189,62 @@ export function ResultsView({ outcomes, speed, advancedStart }: { outcomes: Plan
       };
     });
   }, [best]);
+
+  // Overview = the overarching strategy: per building type "how many, to what levels, over which
+  // hours", plus hero / troops / parties / settlers / gold milestones (Nitai)
+  const overview = useMemo(() => {
+    type Row = { from: number; to: number; what: string; detail: string };
+    if (!best?.settleTime) return [] as Row[];
+    const T = best.settleTime;
+    const ev = best.result.events.filter((e) => e.time <= T + 1);
+    const rows: Row[] = [];
+    const byGid = new Map<number, { first: number; last: number; finals: Map<number, number> }>();
+    for (const e of ev) {
+      if (e.gid === undefined || e.slot === undefined || (e.type !== 'start' && e.type !== 'complete' && e.type !== 'finish')) continue;
+      let g = byGid.get(e.gid);
+      if (!g) { g = { first: e.time, last: e.time, finals: new Map() }; byGid.set(e.gid, g); }
+      g.first = Math.min(g.first, e.time);
+      if (e.type !== 'start' && e.level !== undefined) {
+        g.last = Math.max(g.last, e.time);
+        g.finals.set(e.slot, Math.max(g.finals.get(e.slot) ?? 0, e.level));
+      }
+    }
+    for (const [gid, g] of byGid) {
+      const dist = new Map<number, number>();
+      for (const lvl of g.finals.values()) dist.set(lvl, (dist.get(lvl) ?? 0) + 1);
+      const levels = [...dist.entries()].sort((a, b) => a[0] - b[0]);
+      const n = g.finals.size;
+      const detail = levels.length === 1
+        ? (n > 1 ? `×${n} → L${levels[0][0]}` : `→ L${levels[0][0]}`)
+        : levels.map(([lvl, c]) => `${c}× L${lvl}`).join(', ');
+      rows.push({ from: g.first, to: g.last, what: buildingName(gid), detail });
+    }
+    const hits = ev.filter((e) => e.type === 'oasis' && e.label.startsWith('oasis raid'));
+    const book = ev.find((e) => e.label.startsWith('Book of Wisdom'));
+    const packs = best.result.state.oasisPacks;
+    if (hits.length) rows.push({ from: hits[0].time, to: book?.time ?? hits[hits.length - 1].time, what: 'Hero clears oases',
+      detail: `${hits.length} hits · ${packs.filter((v) => v <= 0).length}/${packs.length} oases fully cleared${book ? ` · Book of Wisdom at ${fmtDuration(book.time)}` : ''}` });
+    const adv = ev.filter((e) => e.type === 'adventure');
+    if (adv.length) rows.push({ from: adv[0].time, to: adv[adv.length - 1].time, what: 'Hero adventures', detail: `${adv.length} adventures (the first one brings the horse)` });
+    const trains = new Map<string, { n: number; first: number; last: number }>();
+    for (const e of ev) {
+      if (e.type !== 'start' || !e.label.startsWith('train ') || e.label === 'train settler') continue;
+      const t = trains.get(e.label) ?? { n: 0, first: e.time, last: e.time };
+      t.n++; t.first = Math.min(t.first, e.time); t.last = Math.max(t.last, e.time); trains.set(e.label, t);
+    }
+    for (const [label, t] of trains) rows.push({ from: t.first, to: t.last, what: label.replace('train ', 'Train '), detail: `${t.n} units` });
+    for (const r of ev.filter((e) => e.type === 'start' && e.label.startsWith('research '))) rows.push({ from: r.time, to: r.time, what: r.label.replace('research ', 'Research '), detail: '' });
+    const parties = ev.filter((e) => e.type === 'celebration');
+    if (parties.length) rows.push({ from: parties[0].time, to: parties[parties.length - 1].time, what: 'Celebrations', detail: parties.map((p) => `${fmtDuration(p.time)} (+${Math.round(p.cp ?? 0)} CP)`).join(', ') });
+    const settlers = ev.filter((e) => e.type === 'start' && e.label === 'train settler');
+    if (settlers.length) rows.push({ from: settlers[0].time, to: settlers[settlers.length - 1].time, what: 'Train settlers', detail: `${settlers.length} settlers` });
+    for (const c of ev.filter((e) => e.label.startsWith('daily quests'))) rows.push({ from: c.time, to: c.time, what: 'Daily quest chest', detail: c.label.replace('daily quests: ', '') });
+    rows.sort((a, b) => a.from - b.from || a.to - b.to);
+    const st = best.result.state;
+    rows.push({ from: T, to: T, what: 'Gold', detail: `${st.goldSpent} spent — ${st.npcExchanges}× NPC, ${st.instantFinishes}× Finish Now` });
+    rows.push({ from: T, to: T, what: '🚀 Settle', detail: `village #${village}` });
+    return rows;
+  }, [best, village]);
 
   if (!best?.settleTime) {
     return (
@@ -274,11 +338,14 @@ export function ResultsView({ outcomes, speed, advancedStart }: { outcomes: Plan
         <Stack direction="row" spacing={3} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
           <Typography variant="h4" color="primary">{fmtDuration(best.settleTime)}</Typography>
           <Typography color="text.secondary">to village #{village} · CP needed: {thr}</Typography>
+          {(best.params as { replannedFromH?: number }).replannedFromH !== undefined && (
+            <Chip size="small" color="warning" label={`↻ re-planned from ${(best.params as { replannedFromH?: number }).replannedFromH}h with your real numbers`} />
+          )}
           {(best.params as { organic?: boolean }).organic ? (
             <>
               <Chip size="small" color="success" label="✦ organic search plan" />
               {(best.params as { opening?: string }).opening && (
-                <Typography variant="caption" color="text.secondary">opening: {(best.params as { opening?: string }).opening}</Typography>
+                <Typography variant="caption" color="text.secondary">opening: {(best.params as { opening?: string }).opening}{(best.params as { seed?: string }).seed ? ` · refined from the ${(best.params as { seed?: string }).seed} plan` : ''}</Typography>
               )}
             </>
           ) : (
@@ -303,9 +370,10 @@ export function ResultsView({ outcomes, speed, advancedStart }: { outcomes: Plan
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <ToggleButtonGroup exclusive size="small" value={view} onChange={(_, v) => v && setView(v)}>
           <ToggleButton value="timeline">Build order</ToggleButton>
+          <ToggleButton value="overview">Overview</ToggleButton>
           <ToggleButton value="chart">Culture points</ToggleButton>
           <ToggleButton value="economy">Economy</ToggleButton>
-          <ToggleButton value="strategies">Strategies</ToggleButton>
+          <ToggleButton value="strategies">Alternatives</ToggleButton>
         </ToggleButtonGroup>
         {view === 'timeline' && (
           <Select
@@ -327,6 +395,75 @@ export function ResultsView({ outcomes, speed, advancedStart }: { outcomes: Plan
           <Button size="small" variant="outlined" onClick={exportPdf}>⬇ PDF</Button>
         </Box>
       </Stack>
+
+      {onReplan && canReplan && (
+        <Paper sx={{ p: 1.5 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            ↻ Follow along — enter the current server time and your actual warehouse resources
+            (optionally hero inventory, culture points and oases fully cleared) to recalculate the plan from your live situation.
+          </Typography>
+          <Stack spacing={1.5}>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1.5, alignItems: 'flex-start' }}>
+              <TextField size="small" label="Server time (hours)" value={rp.atH} onChange={rpSet('atH')} sx={{ width: 160 }} type="number"
+                slotProps={{ htmlInput: { min: 0, step: 0.25 } }} helperText="decimals OK — 9.5 = 9h 30m" />
+              {RES_KEYS.map((k) => (
+                <TextField key={k} size="small" label={`warehouse ${k}`} value={rp[k]} onChange={rpSet(k)} sx={{ width: 136 }} type="number"
+                  slotProps={{ htmlInput: { min: 0 } }} />
+              ))}
+            </Stack>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1.5, alignItems: 'center' }}>
+              {RES_KEYS.map((k) => (
+                <TextField key={k} size="small" label={`hero bag ${k}`} value={rp[`b${k}`]} onChange={rpSet(`b${k}`)} sx={{ width: 136 }} type="number"
+                  slotProps={{ htmlInput: { min: 0 } }} />
+              ))}
+              <TextField size="small" label="culture points" value={rp.cp} onChange={rpSet('cp')} sx={{ width: 136 }} type="number" slotProps={{ htmlInput: { min: 0 } }} />
+              <TextField size="small" label="oases cleared" value={rp.cleared} onChange={rpSet('cleared')} sx={{ width: 136 }} type="number" slotProps={{ htmlInput: { min: 0 } }} />
+              <Button size="small" variant="contained" disabled={!rpReady} onClick={() => {
+                const bagFilled = RES_KEYS.some((k) => rp[`b${k}`] !== '');
+                onReplan({
+                  atH: Number(rp.atH),
+                  res: { wood: Number(rp.wood), clay: Number(rp.clay), iron: Number(rp.iron), crop: Number(rp.crop) },
+                  bag: bagFilled ? { wood: Number(rp.bwood || 0), clay: Number(rp.bclay || 0), iron: Number(rp.biron || 0), crop: Number(rp.bcrop || 0) } : undefined,
+                  cp: rp.cp === '' ? undefined : Number(rp.cp),
+                  cleared: rp.cleared === '' ? undefined : Number(rp.cleared),
+                });
+              }}>Re-plan from here</Button>
+            </Stack>
+          </Stack>
+          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
+            Warehouse = the resource bar; hero bag = resources sitting in the hero's inventory. Blank optional fields keep the plan's own values.
+          </Typography>
+          {replanError && <Typography variant="caption" color="error">{replanError}</Typography>}
+        </Paper>
+      )}
+
+      {view === 'overview' && (
+        <Paper sx={{ p: 1 }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ width: 180 }}>When</TableCell>
+                <TableCell sx={{ width: 220 }}>Step</TableCell>
+                <TableCell>Detail</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {overview.map((r, i) => (
+                <TableRow key={i} hover>
+                  <TableCell sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                    {r.from === r.to ? fmtDuration(r.from) : `${fmtDuration(r.from)} → ${fmtDuration(r.to)}`}
+                  </TableCell>
+                  <TableCell>{r.what}</TableCell>
+                  <TableCell sx={{ color: 'text.secondary' }}>{r.detail}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <Typography variant="caption" color="text.secondary" component="div" sx={{ p: 1 }}>
+            The plan at a glance: each building type with how many you end up with and at which levels, over the hours the plan gets them there — plus hero, troop, party, settler and gold milestones.
+          </Typography>
+        </Paper>
+      )}
 
       {view === 'chart' && (
         <Paper sx={{ p: 2, height: 380 }}>

@@ -29,11 +29,11 @@ export function wallGid(tribe: string): number {
   }
 }
 
-/** Effective max level for the SETTLE-RACE action space. Crannies: never past L3 (Nitai) — L1/L3
- *  are the CP-cheap levels, everything above is a resource sink; L2 exists only as the step to L3.
- *  This is a legality constraint on the search space, not a strategy rule. */
+/** Effective max level for the SETTLE-RACE action space = the building's own max. (Crannies used
+ *  to be capped at L3 as a search shortcut; the official multi-build rule — a second cranny needs
+ *  one at L10 — makes L10 a real, searchable investment, so the cap is gone.) */
 export function raceMaxLevel(gid: number): number {
-  return gid === GID.cranny ? 3 : building(gid).maxLevel;
+  return building(gid).maxLevel;
 }
 
 export function building(gid: number): BuildingData {

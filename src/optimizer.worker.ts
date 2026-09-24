@@ -1,52 +1,69 @@
 /// <reference lib="webworker" />
-import { optimize, type PlanOutcome } from './engine/optimizer/planner';
-import { beamSearch, type BeamAction } from './engine/optimizer/beam';
-import type { SimContext } from './engine/sim/simulate';
+import type { PlanOutcome, StrategyParams } from './engine/optimizer/planner';
+import { runPipeline } from './engine/optimizer/pipeline';
+import { replanFrom } from './engine/optimizer/replan';
+import type { PlanOrder, SimContext } from './engine/sim/simulate';
+import type { Resources } from './engine/types';
 import { buildingName } from './engine/data/buildings';
 import { raiders, cavalryRaiders } from './engine/data/raiders';
 
-export type WorkerRequest = { ctx: SimContext; mode: 'fast' | 'deep' | 'ultra' };
+export type WorkerRequest = {
+  ctx: SimContext;
+  mode: 'fast' | 'deep' | 'ultra';
+  /** Mid-race re-plan (oet's follow-along): correct the followed plan with real numbers at hour X. */
+  replan?: { atH: number; res?: Resources; bag?: Resources; cp?: number; cleared?: number; orders: PlanOrder[]; params: StrategyParams };
+};
 export type WorkerMessage =
-  | { type: 'progress'; depth: number; best: number | null }
-  | { type: 'done'; outcomes: PlanOutcome[] };
+  | { type: 'progress'; stage: 'grid' | 'beam' | 'polish'; depth: number; best: number | null; pct?: number }
+  | { type: 'done'; outcomes: PlanOutcome[] }
+  | { type: 'error'; message: string };
 
 const WIDTHS = { fast: 0, deep: 60, ultra: 200 } as const;
+/** Plan-space search budget (edits of the COMPLETE plan, each scored by a full replay). */
+const POLISH = { fast: 1500, deep: 6000, ultra: 25000 } as const;
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const { ctx, mode } = e.data;
-  const grid = optimize(ctx); // computed ONCE — also handed to the beam (it used to rerun the grid)
-  const greedy = grid.slice(0, 5);
-  if (mode === 'fast') {
-    self.postMessage({ type: 'done', outcomes: greedy } satisfies WorkerMessage);
+  if (e.data.replan) {
+    const r = replanFrom(ctx, e.data.replan, {
+      width: Math.max(40, WIDTHS[mode]), maxDepth: mode === 'ultra' ? 200 : 120, iterations: POLISH[mode],
+    });
+    if (r.outcome) self.postMessage({ type: 'done', outcomes: [r.outcome] } satisfies WorkerMessage);
+    else self.postMessage({ type: 'error', message: r.error ?? 'replan failed' } satisfies WorkerMessage);
     return;
   }
-  const beam = beamSearch(ctx, {
-    width: WIDTHS[mode],
-    greedyGrid: grid,
-    maxDepth: mode === 'ultra' ? 200 : 120,
-    onProgress: (depth, best) => self.postMessage({ type: 'progress', depth, best } satisfies WorkerMessage),
+  self.postMessage({ type: 'progress', stage: 'grid', depth: 0, best: null } satisfies WorkerMessage);
+  const { grid, search: pls } = runPipeline(ctx, POLISH[mode], {
+    onProgress: (done, total, best) => self.postMessage({
+      type: 'progress', stage: 'polish', depth: done, best: Number.isFinite(best) ? best : null, pct: Math.round((100 * done) / Math.max(1, total)),
+    } satisfies WorkerMessage),
   });
-  // present the organic plan as the top outcome, greedy strategies below for comparison
-  const fmtA = (a: BeamAction): string => {
-    switch (a.kind) {
-      case 'field': return buildingName(a.gid); // Woodcutter / Clay Pit / Iron Mine / Cropland
-      case 'up': return `${buildingName(a.gid)} +${a.levels}`;
-      case 'new': return buildingName(a.gid);
+  const greedy = grid.slice(0, 5);
+
+  const fmtO = (o: PlanOrder): string => {
+    switch (o.k) {
+      case 'b': return `${buildingName(o.gid)}${o.lv ? ` ${o.lv}` : ''}`;
       case 'party': return 'Party';
-      case 'settlers': return 'Settlers';
-      case 'raiders': return `${a.count}× ${raiders[ctx.tribe].name}`;
-      case 'cavalry': return `${a.count}× ${cavalryRaiders[ctx.tribe].name}`;
+      case 'settler': return 'Settler';
+      case 'raid': return `${o.n}× ${raiders[ctx.tribe].name}`;
+      case 'cav': return `${o.n}× ${cavalryRaiders[ctx.tribe].name}`;
       case 'research': return `Research ${cavalryRaiders[ctx.tribe]?.name ?? 'cavalry'}`;
       case 'book': return 'Book of Wisdom (respec)';
     }
   };
+  if (!pls || pls.settleTime === null) { // the pipeline never hands back less than the greedy
+    self.postMessage({ type: 'done', outcomes: greedy } satisfies WorkerMessage);
+    return;
+  }
   const organic: PlanOutcome = {
     params: {
-      ...greedy[0].params, organic: true,
-      opening: beam.actions.slice(0, 10).map(fmtA).join(' → ') || '(greedy plan — the beam found nothing better)',
+      ...pls.params, organic: true,
+      opening: pls.orders.slice(0, 10).map(fmtO).join(' → '),
+      seed: pls.seedLabel,
     } as PlanOutcome['params'],
-    settleTime: beam.settleTime,
-    result: beam.result,
+    settleTime: pls.settleTime,
+    result: pls.result,
+    orders: pls.orders, // the complete plan — consumed by mid-race re-planning
   };
   self.postMessage({ type: 'done', outcomes: [organic, ...greedy] } satisfies WorkerMessage);
 };

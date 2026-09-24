@@ -4,6 +4,7 @@ import { ConfigPanel, DEFAULT_CONFIG, type UiConfig } from './ui/ConfigPanel';
 import { ResultsView } from './ui/ResultsView';
 import type { PlanOutcome } from './engine/optimizer/planner';
 import type { SimContext } from './engine/sim/simulate';
+import type { Resources } from './engine/types';
 import type { WorkerMessage, WorkerRequest } from './optimizer.worker';
 import { oasisTricklePerHour } from './engine/data/oases';
 
@@ -58,17 +59,23 @@ export default function App() {
   const [outcomes, setOutcomes] = useState<PlanOutcome[]>([]);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<SearchMode>('deep');
-  const [progress, setProgress] = useState<{ depth: number; best: number | null } | null>(null);
+  const [progress, setProgress] = useState<{ stage: string; depth: number; best: number | null; pct?: number } | null>(null);
+  const [replanError, setReplanError] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  // the ctx + plan a mid-race re-plan corrects — always the last FULL (from-start) plan
+  const lastRunRef = useRef<{ ctx: SimContext; plan?: PlanOutcome } | null>(null);
 
   const getWorker = (): Worker => {
     if (!workerRef.current) {
       const w = new Worker(new URL('./optimizer.worker.ts', import.meta.url), { type: 'module' });
       w.onmessage = (e: MessageEvent<WorkerMessage>) => {
-        if (e.data.type === 'progress') { setProgress({ depth: e.data.depth, best: e.data.best }); return; }
+        if (e.data.type === 'progress') { setProgress({ stage: e.data.stage, depth: e.data.depth, best: e.data.best, pct: e.data.pct }); return; }
+        if (e.data.type === 'error') { setReplanError(e.data.message); setBusy(false); setProgress(null); return; }
+        if (lastRunRef.current && e.data.outcomes[0]?.orders) lastRunRef.current.plan = e.data.outcomes[0];
         setOutcomes(e.data.outcomes);
         setBusy(false);
         setProgress(null);
+        setReplanError(null);
       };
       // a thrown exception must never leave the button stuck on "Optimizing…" forever
       w.onerror = (err) => {
@@ -95,7 +102,23 @@ export default function App() {
   const run = () => {
     setBusy(true);
     setProgress(null);
-    getWorker().postMessage({ ctx: toCtx(config), mode } satisfies WorkerRequest);
+    setReplanError(null);
+    const ctx = toCtx(config);
+    lastRunRef.current = { ctx };
+    getWorker().postMessage({ ctx, mode } satisfies WorkerRequest);
+  };
+
+  // oet's follow-along: correct the followed plan with real numbers at hour X, re-optimize the rest
+  const runReplan = (input: { atH: number; res: Resources; bag?: Resources; cp?: number; cleared?: number }) => {
+    const last = lastRunRef.current;
+    if (!last?.plan?.orders) return;
+    setBusy(true);
+    setProgress(null);
+    setReplanError(null);
+    getWorker().postMessage({
+      ctx: last.ctx, mode,
+      replan: { ...input, orders: last.plan.orders, params: last.plan.params },
+    } satisfies WorkerRequest);
   };
 
   return (
@@ -117,7 +140,8 @@ export default function App() {
               mode={mode} onModeChange={setMode} progress={progress} />
           </Grid>
           <Grid size={{ xs: 12, md: 8, lg: 9 }}>
-            <ResultsView outcomes={outcomes} speed={config.speed} advancedStart={config.advancedStart} />
+            <ResultsView outcomes={outcomes} speed={config.speed} advancedStart={config.advancedStart}
+              onReplan={runReplan} canReplan={!busy && !!lastRunRef.current?.plan?.orders} replanError={replanError} />
           </Grid>
         </Grid>
       </Container>

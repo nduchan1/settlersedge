@@ -4,7 +4,7 @@
  *  hero production (141/07), task rewards with hero-level bonus (08), settler training with
  *  Residence ×0.9/level + alliance Recruitment (07/10), reworked celebrations: instant capped
  *  CP + cooldown (03/07), settle-readiness detection vs official CP thresholds (03/05). */
-import { GID, fieldProduction, levelData, storageCapacity } from '../data/buildings';
+import { GID, building, fieldProduction, levelData, storageCapacity } from '../data/buildings';
 import { tribes } from '../data/tribes';
 import { cavalryRaiders, raidThroughputPerHour, raiders, troopSpeedFactor, unitThroughputPerHour } from '../data/raiders';
 import { BASE_STORAGE, STARTING_RESOURCES } from '../data/servers';
@@ -105,8 +105,24 @@ export interface SimState {
   /** Daily-quest progress (REAL 24h windows from server start — screenshot-verified point table,
    *  Nitai 2026-08-21). Chests: day 1 @25 pts → 50 hero XP; day 2 → +50 CP. Optional so
    *  hand-built test states stay valid; lazily initialized. */
-  daily?: { day: number; pts: number; cnt: Record<string, number>; xpChest: boolean; cpChest: boolean };
+  daily?: { day: number; pts: number; cnt: Record<string, number>; xpChest: boolean; cpChest: boolean; fleetDay?: number };
 }
+
+/** One ORDER of a complete plan in replayable form (plan-space search / exact re-plans).
+ *  'b' orders address a slot by building type + instance (the i-th slot of that gid in slot order —
+ *  fields included), so an order list stays meaningful when orders are moved around. `lv` is the
+ *  level the order targeted when recorded (display only; replay ignores it). */
+export type PlanOrder =
+  | { k: 'b'; gid: number; i: number; lv?: number }
+  | { k: 'party' }
+  | { k: 'settler' }
+  | { k: 'raid'; n: number }
+  | { k: 'cav'; n: number }
+  | { k: 'research' }
+  | { k: 'book' };
+
+/** Thrown when a scored replay passes its deadline without having settled (search pruning). */
+export class DeadlineExceeded extends Error {}
 
 export type PlanStep =
   | { kind: 'build'; slot: number }
@@ -257,16 +273,42 @@ export function goldLeft(state: SimState, ctx: SimContext): number {
   return Math.max(0, (ctx.gold?.budget ?? 0) - state.goldSpent);
 }
 
-/** Village building slots (beyond the 18 resource fields): 20 in a standard T4.6 village
- *  (plus wall & rally point, which share the cap here for simplicity — v1). */
+/** Village building slots (beyond the 18 resource fields): 20 GENERAL slots in a standard T4.6
+ *  village; the Rally Point and the wall each have a dedicated slot of their own and do not count
+ *  (audit #9; the alliance guide's 22-building order only fits because of this). */
 export const MAX_BUILDING_SLOTS = 20;
+export const OWN_SLOT_GIDS = new Set([16, 31, 32, 33, 42, 43, 47]); // rally point + every tribe's wall
 
 export function buildingSlotsUsed(state: SimState): number {
-  return state.slots.filter((s) => s.gid > 4).length;
+  return state.slots.filter((s) => s.gid > 4 && !OWN_SLOT_GIDS.has(s.gid)).length;
+}
+
+/** Multi-build rule (official, Nitai 2026-09-17): a SECOND cranny requires an existing cranny at
+ *  level 10; a second warehouse/granary requires one at level 20. Every other building is unique. */
+export const MULTI_BUILD_UNLOCK: Record<number, number> = { [GID.cranny]: 10, [GID.warehouse]: 20, [GID.granary]: 20 };
+
+/** May another building of this type be placed right now? (COMPLETED level counts, not queued.) */
+export function canAddBuilding(state: SimState, gid: number): boolean {
+  const existing = state.slots.filter((s) => s.gid === gid);
+  if (!existing.length) return true;
+  const need = MULTI_BUILD_UNLOCK[gid];
+  return need !== undefined && existing.some((s) => s.level >= need);
 }
 
 export function addSlot(state: SimState, gid: number): number {
-  if (buildingSlotsUsed(state) >= MAX_BUILDING_SLOTS) throw new Error('No free building slots');
+  if (!OWN_SLOT_GIDS.has(gid) && buildingSlotsUsed(state) >= MAX_BUILDING_SLOTS) throw new Error('No free building slots');
+  // exclusivity (official prerequisites): e.g. Residence / Palace / Command Center never coexist
+  for (const p of building(gid).prerequisites as { type: string; gid?: number | number[] }[]) {
+    if (p.type !== 'NotBuilding' || p.gid === undefined) continue;
+    const alts = Array.isArray(p.gid) ? p.gid : [p.gid];
+    if (alts.some((g) => state.slots.some((sl) => sl.gid === g))) throw new Error(`${buildingLabel(gid)} cannot coexist with gid ${alts.join('/')}`);
+  }
+  if (!canAddBuilding(state, gid)) {
+    const need = MULTI_BUILD_UNLOCK[gid];
+    if (need !== undefined) throw new Error(`Another ${buildingLabel(gid)} needs one at level ${need} first`);
+    // unique building already present: hand back its slot (callers/tests mean "the X slot")
+    return state.slots.findIndex((sl) => sl.gid === gid);
+  }
   state.slots.push({ gid, level: 0 });
   return state.slots.length - 1;
 }
@@ -336,9 +378,10 @@ export function affordabilityWait(state: SimState, ctx: SimContext, cost: Resour
   if (npcActive(state, ctx)) {
     const totalCost = cost.wood + cost.clay + cost.iron + cost.crop;
     const totalStock = have.wood + have.clay + have.iron + have.crop;
-    if (totalStock >= totalCost) return 0;
-    // accumulating beyond stock: each resource must be storable up to its share
+    // NPC redistributes WITHIN storage: a component above its cap can never be paid (critique:
+    // the stock check used to run first, so an over-cap order was "affordable" through the NPC)
     if (Math.max(cost.wood, cost.clay, cost.iron) > caps.warehouse || cost.crop > caps.granary) return Infinity;
+    if (totalStock >= totalCost) return 0;
     const totalRate = rate.wood + rate.clay + rate.iron + rate.crop;
     return totalRate > 0 ? (totalCost - totalStock) / totalRate : Infinity;
   }
@@ -413,6 +456,17 @@ export class Simulation {
   private clickBatch: boolean[] = [];
   /** Monotonic id of the current click — lets presentation group buildings per click. */
   private clickId = 0;
+  /** Per gid: its highest level BEFORE the current click completed it (dependency legality). */
+  private clickPre = new Map<number, number>();
+  /** What the account held when the current click opened (after paying its opener, before the
+   *  click completed anything): storage caps, NPC access and reachable funds. A same-instant order
+   *  may only ride the click if it was placeable from THAT — not from storage, NPC, task rewards
+   *  or hero loot the click itself unlocked (review). `clickSpent` = what joiners already used. */
+  private clickCaps = { warehouse: 0, granary: 0 };
+  private clickNpc = false;
+  private clickAvail: Resources = { wood: 0, clay: 0, iron: 0, crop: 0 };
+  private clickSpent: Resources = { wood: 0, clay: 0, iron: 0, crop: 0 };
+  private researchJoinOk = false;
   /** Adventures/oasis clears that came due before a Rally Point existed (hero can't leave). */
   private heldIncome: Extract<PendingEvent, { kind: 'income' }>[] = [];
   /** Time windows when the hero walks adventures (one hero — raids must yield). Immutable. */
@@ -442,13 +496,21 @@ export class Simulation {
     const heal = this.ctx.hero.healPerHour ?? 0;
     this.state.heroHP = Math.min(100, this.state.heroHP + (heal * (t - this.state.heroHealT)) / 3600);
     this.state.heroHealT = t;
-    if (this.state.heroRetired || !packs.some((v) => v > 0) || t > 21 * 86400) {
+    // a SCHEDULED respec hour is a real Book of Wisdom: production on AND clearing OVER (points
+    // leave strength — the hero can't keep slamming oases; the old code double-dipped: full
+    // production plus full-strength clears, making respecAtH probes physically impossible)
+    const manualBook = this.ctx.hero.respecAtH !== undefined && t >= this.ctx.hero.respecAtH * 3600 - 1;
+    if (this.state.heroRetired || manualBook || !packs.some((v) => v > 0) || t > 21 * 86400) {
       // clears finished: claim any remaining saved XP (levels boost the respec production points)
       if (this.state.xpBank > 0) { this.addXp(this.state.xpBank); this.state.xpBank = 0; }
       if (!this.state.heroRetired && !this.ctx.hero.enabled && packs.length > 0 && !packs.some((v) => v > 0)) {
         this.state.heroRetired = true; // marks the respec as announced; production was already on via clearsDone
         this.rateCache = null;
         this.evt({ time: t, type: 'oasis', label: 'Book of Wisdom: respec to production (all oases cleared)' });
+      } else if (manualBook && !this.state.heroRetired && !this.ctx.hero.enabled) {
+        this.state.heroRetired = true;
+        this.rateCache = null;
+        this.evt({ time: t, type: 'oasis', label: 'Book of Wisdom: respec to production (scheduled hour)' });
       }
       return;
     }
@@ -492,7 +554,11 @@ export class Simulation {
     }
     if (!sel) { retry(); return; } // heal up passively first
     const best = sel.i; const hit = sel.hit;
-    const cad = Math.max(60, raidRoundTripH(this.ctx.tribe, oasisDistance(best, packs.length, o.distance), this.ctx.config.speed) * 3600);
+    // horse: adventure #1 always rewards it and the busy-window rule above already forces every
+    // raid to wait for that first trip's RETURN — so with adventures on, raids are mounted from the
+    // first hit. Adventures off = no horse ever = on foot (7 f/h), which is why nobody skips them.
+    const mounted = !!this.ctx.adventures;
+    const cad = Math.max(60, raidRoundTripH(this.ctx.tribe, oasisDistance(best, packs.length, o.distance), this.ctx.config.speed, mounted) * 3600);
     // Book-of-Wisdom cutoff (Saesenthessi): if this raid's bounty rate is below what the hero's
     // points would produce as resources, retire — respec to production and abandon the far tail
     if (!this.ctx.hero.enabled) {
@@ -591,6 +657,23 @@ export class Simulation {
   private econCum: EconCum = { fields: 0, hero: 0, trickle: 0, tasks: 0, oasis: 0, adventures: 0, spend: 0 };
   /** Search-clone mode: skip event history & CP-log growth (score on state; replay for output). */
   private light = false;
+  /** Mid-race re-planning (oet's follow-along idea): when set, the sim snapshots a clone of
+   *  itself the first time an event crosses this second — the frozen "state at hour X" that a
+   *  re-plan corrects with the player's REAL numbers and then re-optimizes from. */
+  captureAtT?: number;
+  captured?: Simulation;
+  /** When set, every order this sim executes is appended here in replayable form (plan search). */
+  recorder?: PlanOrder[];
+  /** Search pruning: once sim time passes this without a settle, waits throw DeadlineExceeded —
+   *  sound, because culture points and settlers never decrease (a later settle can only be later). */
+  deadline?: number;
+
+  /** Settle conditions met at or before the current moment (even between snapshots). */
+  hasSettled(): boolean {
+    if (this.settledAt !== null) return true;
+    const g = settleGoalOf(this.ctx);
+    return this.state.settlers >= g.settlers && this.state.cp >= g.threshold;
+  }
 
   ctx: SimContext;
 
@@ -683,7 +766,24 @@ export class Simulation {
     c.lastFinishAt = this.lastFinishAt;
     c.clickBatch = this.clickBatch.slice();
     c.clickId = this.clickId;
+    c.clickPre = new Map(this.clickPre);
+    c.clickCaps = { ...this.clickCaps };
+    c.clickNpc = this.clickNpc;
+    c.clickAvail = { ...this.clickAvail };
+    c.clickSpent = { ...this.clickSpent };
+    if (this.recorder) c.recorder = this.recorder.slice();
+    c.lastLoggedRate = this.lastLoggedRate;
     return c;
+  }
+
+  /** Flip a (light) clone into a full-fidelity recorder — mid-race re-planning continues the
+   *  captured state WITH events/series so the user gets a build table from hour X onward. */
+  enableRecording(): void {
+    this.light = false;
+    this.events = [];
+    this.econCum = { fields: 0, hero: 0, trickle: 0, tasks: 0, oasis: 0, adventures: 0, spend: 0 };
+    this.cpLog = [{ t: this.state.time, cp: this.state.cp, settlers: this.state.settlers }];
+    this.snapshot();
   }
 
   /** Cached production rate — recomputed only when slot levels or the hero level change. */
@@ -740,6 +840,38 @@ export class Simulation {
     }
     if (settlersAt === Infinity) return null;
     return Math.max(crossing, settlersAt);
+  }
+
+  /** Re-plan corrected the state by hand (real CP etc.): restart the settle-interpolation log there. */
+  rebaseLog(): void {
+    this.cpLog = [{ t: this.state.time, cp: this.state.cp, settlers: this.state.settlers }];
+    this.rateCache = null;
+    this.settledAt = null; // the corrected numbers decide whether (and when) the race settles
+  }
+
+  /** Storage the village WILL have once every queued Warehouse/Granary level completes. Raising
+   *  storage against COMPLETED caps queued one level too many per raise (critique). */
+  orderedCaps(): { warehouse: number; granary: number } {
+    let wh = 0, gr = 0;
+    this.state.slots.forEach((sl, j) => {
+      if (sl.gid === GID.warehouse) wh += storageCapacity(sl.gid, this.orderedLevel(j));
+      if (sl.gid === GID.granary) gr += storageCapacity(sl.gid, this.orderedLevel(j));
+    });
+    return { warehouse: wh || BASE_STORAGE, granary: gr || BASE_STORAGE };
+  }
+
+  /** Settlers ordered but still in training. */
+  queuedSettlers(): number {
+    let n = 0;
+    for (const p of this.pending) if (p.kind === 'settlers') n += p.count;
+    return n;
+  }
+
+  /** Units ordered but still in training. */
+  queuedUnits(kind: 'raiders' | 'cavalry'): number {
+    let n = 0;
+    for (const p of this.pending) if (p.kind === kind) n += p.count;
+    return n;
   }
 
   /** Current level plus queued (not yet completed) build orders on a slot. */
@@ -819,6 +951,19 @@ export class Simulation {
 
   private accrue(dt: number): void {
     if (dt <= 0) return;
+    const at = this.captureAtT;
+    if (at !== undefined && !this.captured && this.state.time <= at && this.state.time + dt >= at) {
+      const cut = at - this.state.time;
+      this.accrueRaw(cut);
+      this.captured = this.clone();
+      this.accrueRaw(dt - cut);
+      return;
+    }
+    this.accrueRaw(dt);
+  }
+
+  private accrueRaw(dt: number): void {
+    if (dt <= 0) return;
     const s = this.state;
     const rate = this.cachedRate();
     const caps = storageCaps(s);
@@ -872,21 +1017,96 @@ export class Simulation {
     const d = (this.state.daily ??= { day: 0, pts: 0, cnt: {}, xpChest: false, cpChest: false });
     const day = Math.floor(this.state.time / 86400);
     if (day !== d.day) { d.day = day; d.pts = 0; d.cnt = {}; } // daily reset — points do NOT carry over
+    // troop raids on cleared oases run continuously once a fleet exists (no discrete event in the
+    // sim) — they satisfy "raid an unoccupied oasis" 3×/day by themselves (the alliance guide farms
+    // exactly this for the day-2 chest)
+    const fleet = this.state.raiders + this.state.cavalry;
+    if (fleet > 0 && this.state.oasisPacks.some((v) => v <= 0) && d.fleetDay !== day) {
+      d.fleetDay = day;
+      const have = d.cnt.oasis ?? 0; const add = Math.max(0, 3 - have);
+      d.cnt.oasis = have + add; d.pts += add * 3;
+    }
     const [per, max] = RULES[cat];
     if ((d.cnt[cat] ?? 0) >= max) return;
     d.cnt[cat] = (d.cnt[cat] ?? 0) + 1;
     d.pts += per;
-    if (day === 0 && !d.xpChest && d.pts >= 25) {
+    // the last few points can be BOUGHT: any gold spend counts (NPC / an auction bid — the guide's
+    // '3x spend gold on whatever'). 3 gold per 2 points, only when it actually completes a chest.
+    const topUp = (need: number): boolean => {
+      const missing = need - d.pts;
+      const slots = 3 - (d.cnt.gold ?? 0);
+      if (missing > 0 && missing <= 2 * slots && goldLeft(this.state, this.ctx) >= 3 * Math.ceil(missing / 2)) {
+        for (let k = 0; k < Math.ceil(missing / 2); k++) {
+          this.state.goldSpent += 3; d.cnt.gold = (d.cnt.gold ?? 0) + 1; d.pts += 2;
+          this.evt({ time: this.state.time, type: 'npc', label: 'spend 3 gold for daily-quest points', gold: 3 });
+        }
+      }
+      return d.pts >= need;
+    };
+    if (day === 0 && !d.xpChest && topUp(25)) {
       d.xpChest = true;
       if (!this.ctx.hero.enabled && this.ctx.oasisRaids && this.state.oasisPacks.some((v) => v > 0)) this.state.xpBank += 50;
       else this.addXp(50);
       this.evt({ time: this.state.time, type: 'task', label: 'daily quests: 25-point chest (+50 hero XP)' });
     }
-    if (day === 1 && !d.cpChest && d.pts >= 25) {
+    if (day === 1 && !d.cpChest && topUp(25)) {
       d.cpChest = true;
       this.state.cp += 50;
       this.evt({ time: this.state.time, type: 'task', label: 'daily quests: day-2 chest (+50 CP)', cp: 50 });
+      this.snapshot();
     }
+  }
+
+  /** Public: advance time until `gid` has COMPLETED `level` (it must already be ordered). */
+  awaitLevel(gid: number, level: number): void { this.awaitBuilding(gid, level, 'awaitLevel'); }
+
+  /** A NEW building can only be ordered once its prerequisites are COMPLETE (the game hides the
+   *  button until then). Single-lane tribes already serialise this; Romans could start a building
+   *  while its field prerequisite still ran on the field lane. Waits like a player would. */
+  private awaitPrereqs(gid: number): void {
+    for (const p of building(gid).prerequisites as { type: string; gid?: number | number[]; level?: number }[]) {
+      if (p.type !== 'Building' || p.gid === undefined) continue;
+      const alts = Array.isArray(p.gid) ? p.gid : [p.gid];
+      const need = p.level ?? 1;
+      for (let guard = 0; guard < 200 && !alts.some((g) => levelOf(this.state, g) >= need); guard++) {
+        let idx = -1, best = -1;
+        this.state.slots.forEach((sl, j) => { if (alts.includes(sl.gid) && this.orderedLevel(j) > best) { best = this.orderedLevel(j); idx = j; } });
+        if (idx === -1 || best < need) throw new Error(`${buildingLabel(gid)} requires gid ${alts.join('/')} level ${need}`);
+        const next = this.pending.filter((q) => q.kind === 'build' && q.slot === idx).sort((a, b) => a.t - b.t)[0];
+        if (!next) throw new Error(`${buildingLabel(gid)} requires gid ${alts.join('/')} level ${need}`);
+        this.applyDue(next.t);
+      }
+    }
+  }
+
+  /** May an order at this instant ride the OPEN Finish-Now click? Not if the click itself made it
+   *  possible: a prerequisite / multi-build unlock the click completed, or task rewards the click
+   *  paid out (in the game the second order can only be placed after the click — a new click).
+   *  `needs`: prerequisite (gid alternatives, level) pairs to check against pre-click levels. */
+  private clickJoinLegal(cost: Resources, needs: { alts: number[]; level: number }[]): boolean {
+    if (this.lastFinishAt !== this.state.time) return false;
+    const pre = (g: number) => (this.clickPre.has(g) ? this.clickPre.get(g)! : levelOf(this.state, g));
+    for (const n of needs) if (!n.alts.some((g) => pre(g) >= n.level)) return false;
+    if (Math.max(cost.wood, cost.clay, cost.iron) > this.clickCaps.warehouse || cost.crop > this.clickCaps.granary) return false;
+    const a = this.clickAvail, sp = this.clickSpent;
+    if (this.clickNpc) {
+      return a.wood + a.clay + a.iron + a.crop - (sp.wood + sp.clay + sp.iron + sp.crop) >= cost.wood + cost.clay + cost.iron + cost.crop;
+    }
+    return a.wood - sp.wood >= cost.wood && a.clay - sp.clay >= cost.clay && a.iron - sp.iron >= cost.iron && a.crop - sp.crop >= cost.crop;
+  }
+
+  /** A same-instant order rode the click: it used part of the click's funds. */
+  private joinClick(cost: Resources): void {
+    this.clickSpent = { wood: this.clickSpent.wood + cost.wood, clay: this.clickSpent.clay + cost.clay, iron: this.clickSpent.iron + cost.iron, crop: this.clickSpent.crop + cost.crop };
+  }
+
+  /** A fresh paid click opens (its opener already paid, nothing completed yet): snapshot. */
+  private openClick(): void {
+    this.clickPre = new Map();
+    this.clickCaps = storageCaps(this.state);
+    this.clickNpc = npcActive(this.state, this.ctx);
+    this.clickAvail = reachable(this.state);
+    this.clickSpent = { wood: 0, clay: 0, iron: 0, crop: 0 };
   }
 
   /** If `gid` is ordered but not yet at `level`, advance time until it completes (the player would
@@ -904,8 +1124,9 @@ export class Simulation {
   private applyDue(until: number): void {
     this.sortPending();
     while (this.pending.length && (this.sortPending(), this.pending[0].t <= until)) {
-      const c = this.pending.shift()!;
-      this.accrue(c.t - this.state.time);
+      const c = this.pending[0];
+      this.accrue(c.t - this.state.time); // a re-plan capture inside must still see `c` pending
+      this.pending.shift();
       if (c.kind === 'build') {
         this.state.slots[c.slot].level = c.target;
         this.levelsVersion++;
@@ -934,6 +1155,7 @@ export class Simulation {
         this.evt({ time: c.t, type: 'raiders', label: `${c.count} ${raiders[this.ctx.tribe].name} ready (${this.state.raiders} total)` });
       } else {
         this.state.settlers += c.count;
+        this.rateCache = null; // settlers eat 1 crop/h each — upkeep changed
         this.evt({ time: c.t, type: 'settlers', label: `${c.count} settlers ready` });
       }
       this.snapshot();
@@ -946,6 +1168,7 @@ export class Simulation {
    *  with 15/33 cleared; no local formula got that right on every map). */
   bookRespec(): void {
     if (this.state.heroRetired || this.ctx.hero.enabled) return;
+    this.recorder?.push({ k: 'book' });
     this.state.heroRetired = true;
     this.rateCache = null; // production switches on
     if (this.state.xpBank > 0) { this.addXp(this.state.xpBank); this.state.xpBank = 0; }
@@ -957,18 +1180,20 @@ export class Simulation {
   researchCavalry(): void {
     const cav = cavalryRaiders[this.ctx.tribe];
     if (!cav) throw new Error('no cavalry raider for this tribe');
-    if (this.state.cavalryResearched) return;
+    if (this.state.cavalryResearched || this.pending.some((p) => p.kind === 'research')) return;
     this.awaitBuilding(GID.academy, 5, 'researchCavalry');
     this.awaitBuilding(GID.stable, cav.stableLevel, 'researchCavalry');
     this.waitFor(cav.research, this.laneFreeAt.academy);
+    this.researchJoinOk = this.clickJoinLegal(cav.research, [{ alts: [GID.academy], level: 5 }, { alts: [GID.stable], level: cav.stableLevel }]);
     this.pay(cav.research);
+    this.recorder?.push({ k: 'research' });
     const duration = Math.round(cav.researchTime / this.ctx.config.speed);
     this.evt({ time: this.state.time, type: 'start', label: `research ${cav.name}`, cost: cav.research, gold: 0 });
     // Academy research is Finish-Now-able (Nitai): one 2-gold click completes the research AND any
     // queued non-admin buildings. Research holds no build-queue slot, so it rides a same-instant
     // click for free, or opens a fresh click that queued builds then join.
     const g = this.ctx.gold;
-    const sameInstant = this.lastFinishAt === this.state.time;
+    const sameInstant = this.researchJoinOk;
     if (g && duration >= g.instantFinishMin * 60 && (sameInstant || goldLeft(this.state, this.ctx) >= 2)) {
       this.state.cavalryResearched = true;
       if (!sameInstant) {
@@ -977,8 +1202,10 @@ export class Simulation {
         this.lastFinishAt = this.state.time;
         this.clickBatch = []; // fresh click — queued builds placed this instant may join it
         this.clickId += 1;
+        this.openClick();
         this.dailyQuest('gold');
       }
+      if (sameInstant) this.joinClick(cav.research);
       this.evt({ time: this.state.time, type: 'finish', label: sameInstant ? `Finish Now (same click): ${cav.name} research` : `Finish Now: ${cav.name} research`, gold: sameInstant ? 0 : 2, click: this.clickId });
       return;
     }
@@ -999,12 +1226,13 @@ export class Simulation {
       if (!r) throw new Error('trainCavalry requires the cavalry unit to be researched');
       this.applyDue(r.t);
     }
-    if (count >= 20) this.dailyQuest('cav20'); // "build 20 cavalry units of one type at once"
-    const stLvl = Math.max(1, levelOf(this.state, GID.stable));
-    const per = Math.round((cav.time * Math.pow(0.9, stLvl - 1)) / this.ctx.config.speed);
     for (let i = 0; i < count; i++) {
       this.waitFor(cav.cost, 0);
       this.pay(cav.cost);
+      // each unit is its own order: the Stable level AT that order sets its training time
+      const stLvl = Math.max(1, levelOf(this.state, GID.stable));
+      const per = Math.round((cav.time * Math.pow(0.9, stLvl - 1)) / this.ctx.config.speed);
+      this.recorder?.push({ k: 'cav', n: 1 });
       const start = Math.max(this.state.time, this.laneFreeAt.stable);
       const done = start + per;
       this.evt({ time: this.state.time, type: 'start', label: `train ${cav.name}`, cost: cav.cost, gold: 0 });
@@ -1018,13 +1246,14 @@ export class Simulation {
   trainRaiders(count = 1): void {
     this.awaitBuilding(GID.rallyPoint, 1, 'trainRaiders');
     this.awaitBuilding(GID.barracks, 1, 'trainRaiders');
-    if (count >= 20) this.dailyQuest('inf20'); // "build 20 infantry units of one type at once"
     const u = raiders[this.ctx.tribe];
-    const brLvl = Math.max(1, levelOf(this.state, GID.barracks));
-    const per = Math.round((u.time * Math.pow(0.9, brLvl - 1)) / this.ctx.config.speed); // official trainingTimeBarracks 0.9^(L-1)
     for (let i = 0; i < count; i++) {
       this.waitFor(u.cost, 0);
       this.pay(u.cost);
+      // each unit is its own order: the Barracks level AT that order sets its training time
+      const brLvl = Math.max(1, levelOf(this.state, GID.barracks));
+      const per = Math.round((u.time * Math.pow(0.9, brLvl - 1)) / this.ctx.config.speed); // official 0.9^(L-1)
+      this.recorder?.push({ k: 'raid', n: 1 });
       const start = Math.max(this.state.time, this.laneFreeAt.barracks);
       const done = start + per;
       this.evt({ time: this.state.time, type: 'start', label: `train ${u.name}`, cost: u.cost, gold: 0 });
@@ -1036,6 +1265,7 @@ export class Simulation {
   private waitFor(cost: Resources, laneT: number): number {
     // returns absolute start time; processes due completions while waiting
     for (;;) {
+      if (this.deadline !== undefined && this.state.time > this.deadline && !this.hasSettled()) throw new DeadlineExceeded();
       this.sortPending();
       const s = this.state;
       const wait = affordabilityWait(s, this.ctx, cost, this.cachedRate());
@@ -1163,8 +1393,27 @@ export class Simulation {
     const target = slot.level + 1 + this.pending.filter((p) => p.kind === 'build' && p.slot === slotIdx).length;
     const ld = levelData(slot.gid, target);
     const cost: Resources = { wood: ld.resourceCost.r1, clay: ld.resourceCost.r2, iron: ld.resourceCost.r3, crop: ld.resourceCost.r4 };
+    if (target === 1) this.awaitPrereqs(slot.gid);
     this.waitFor(cost, this.laneFreeAt[lane]);
+    // may this order ride the open click? decided on the state BEFORE paying
+    let joinOk = false;
+    if (this.lastFinishAt === this.state.time) {
+      const needs: { alts: number[]; level: number }[] = [];
+      if (target === 1) {
+        for (const p of building(slot.gid).prerequisites as { type: string; gid?: number | number[]; level?: number }[]) {
+          if (p.type === 'Building' && p.gid !== undefined) needs.push({ alts: Array.isArray(p.gid) ? p.gid : [p.gid], level: p.level ?? 1 });
+        }
+        const unlock = MULTI_BUILD_UNLOCK[slot.gid];
+        if (unlock !== undefined && this.state.slots.some((sl, j) => j !== slotIdx && sl.gid === slot.gid)) needs.push({ alts: [slot.gid], level: unlock });
+      }
+      joinOk = this.clickJoinLegal(cost, needs);
+    }
     this.pay(cost);
+    if (this.recorder) {
+      let inst = 0;
+      for (let j = 0; j < slotIdx; j++) if (this.state.slots[j].gid === slot.gid) inst++;
+      this.recorder.push({ k: 'b', gid: slot.gid, i: inst, lv: target });
+    }
     const mb = Math.max(1, levelOf(this.state, GID.mainBuilding));
     const duration = Math.round((ld.buildingTime * mbTimeFactor(mb)) / this.ctx.config.speed);
     this.evt({ time: this.state.time, type: 'start', label: `→ L${target}`, slot: slotIdx, gid: slot.gid, level: target, cost, gold: 0 });
@@ -1174,24 +1423,25 @@ export class Simulation {
     // same category (field vs building). A 3rd/4th order at the same instant needs a new click.
     const g = this.ctx.gold;
     const isField = FIELD_GIDS.includes(slot.gid);
-    const sameInstant = this.lastFinishAt === this.state.time;
-    const clickHasRoom = sameInstant && this.clickFits(isField);
+    const clickHasRoom = joinOk && this.clickFits(isField);
     // Administrative buildings (Residence / Palace / Command Center) can NEVER be instant-finished
     // (Nitai): a click completes only the non-administrative orders; if only administrative ones
     // are queued, no click is possible. They always run their full timer.
     const administrative = (ADMIN_GIDS as number[]).includes(slot.gid);
     if (!administrative && g && duration >= g.instantFinishMin * 60 && (clickHasRoom || goldLeft(this.state, this.ctx) >= 2)) {
-      slot.level = target;
-      this.levelsVersion++;
-      if (clickHasRoom) {
-        this.clickBatch.push(isField);
-      } else {
+      if (!clickHasRoom) {
         this.state.goldSpent += 2;
         this.state.instantFinishes += 1;
         this.lastFinishAt = this.state.time;
-        this.clickBatch = [isField];
+        this.clickBatch = [];
         this.clickId += 1;
+        this.openClick();
       }
+      else this.joinClick(cost);
+      this.clickBatch.push(isField);
+      if (!this.clickPre.has(slot.gid)) this.clickPre.set(slot.gid, levelOf(this.state, slot.gid));
+      slot.level = target;
+      this.levelsVersion++;
       this.evt({ time: this.state.time, type: 'finish', label: clickHasRoom ? 'Finish Now (same click)' : 'Finish Now', slot: slotIdx, gid: slot.gid, level: target, gold: clickHasRoom ? 0 : 2, click: this.clickId });
       if (!clickHasRoom) this.dailyQuest('gold'); // a paid click = "gain or spend gold"
       this.collectTasks([...(taskIndex.byGid.get(slot.gid) ?? []), ...taskIndex.meta]);
@@ -1222,6 +1472,7 @@ export class Simulation {
       // an order can be placed while the previous settler trains (queue), so only affordability gates it
       this.waitFor(t.settlerCost, 0);
       this.pay(t.settlerCost);
+      this.recorder?.push({ k: 'settler' });
       const start = Math.max(this.state.time, this.laneFreeAt.training);
       const done = start + per;
       this.evt({ time: this.state.time, type: 'start', label: 'train settler', cost: t.settlerCost });
@@ -1237,6 +1488,7 @@ export class Simulation {
     const cost = CELEBRATION_COST[great ? 'great' : 'small'];
     this.waitFor(cost, this.state.celebrationBusyUntil);
     this.pay(cost);
+    this.recorder?.push({ k: 'party' });
     // reworked celebrations: instant CP = daily CP production, capped per speed (research/03, /07)
     const [smallCap, greatCap] = celebrationCpCap[this.ctx.config.speed];
     const grant = Math.min(great ? greatCap : smallCap, cpPerSecond(this.state) * 86400);

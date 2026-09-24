@@ -231,7 +231,7 @@ describe('NPC merchant', () => {
 describe('BP oasis raiding (derived combat)', () => {
   it('hero clears packs over repeated raids; bounty 40/supply + 1 XP/supply; no respawn', () => {
     const r = simulate([], ctx({
-      oasisRaids: { count: 2, packSupply: 6, firstAtH: 1, distance: 3, tricklePerHour: 0 },
+      oasisRaids: { count: 2, packSupply: 6, firstAtH: 1, distance: 1, tricklePerHour: 0 }, // no adventures in this ctx = no horse (on foot, 7 f/h): keep the oasis adjacent so the last remnant still beats hero production
     }), withRP());
     const raids = r.events.filter((e) => e.type === 'oasis');
     expect(raids.length).toBeGreaterThanOrEqual(2); // partial clears force re-hits
@@ -338,7 +338,7 @@ describe('instant finish (Finish Now)', () => {
   });
   it('Romans: building + building + building = 2 clicks (4 gold)', () => {
     const s = rich();
-    const a = addSlot(s, GID.mainBuilding), b = addSlot(s, GID.cranny), c = addSlot(s, GID.cranny);
+    const a = addSlot(s, GID.mainBuilding), b = addSlot(s, GID.cranny), c = addSlot(s, GID.warehouse); // 3 DISTINCT buildings (a 2nd cranny needs one at L10 — official rule)
     const r = simulate([{ kind: 'build', slot: a }, { kind: 'build', slot: b }, { kind: 'build', slot: c }], ctx({ tribe: 'romans', gold: G }), s);
     expect(r.state.goldSpent).toBe(4);
     expect(r.state.instantFinishes).toBe(2);
@@ -420,6 +420,7 @@ describe('Hun x3 audit fixes', () => {
   it('training waits for a QUEUED Barracks instead of throwing', () => {
     const s = withRP();
     s.res = { wood: 3000, clay: 3000, iron: 3000, crop: 3000 };
+    s.slots.find((sl) => sl.gid === GID.mainBuilding)!.level = 3; // Barracks needs MB 3 (prerequisites are enforced now)
     const b = addSlot(s, GID.barracks);
     const r = simulate([{ kind: 'build', slot: b }, { kind: 'trainRaiders', count: 1 }], ctx(), s);
     const done = r.events.find((e) => e.type === 'complete' && e.gid === GID.barracks)!.time;
